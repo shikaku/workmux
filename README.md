@@ -689,10 +689,10 @@ immediately. If the branch doesn't exist, it will be created automatically.
   `--headless`. Hook output and diagnostics use stderr.
 - `--config <path>`: Use an alternate config file for this invocation. Still
   merges with global config.
-- `--fork`: Fork the last conversation from the current worktree into the new
-  one. The agent resumes with the forked conversation context. Use
-  `--fork=<session-id>` to fork a specific session (prefix matching supported).
-  Supports Claude Code and Codex.
+- `--fork`: Fork the last conversation from the current worktree or its
+  subdirectories into the new one. The agent resumes with the forked
+  conversation context. Use `--fork=<session-id>` to fork a specific session
+  (prefix matching supported). Supports Claude Code and Codex.
 
 #### Skip options
 

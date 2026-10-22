@@ -23,6 +23,7 @@ editUrl: https://github.com/raine/workmux/edit/main/CHANGELOG.md
 
 ## Unreleased
 
+- Find conversations started in a subdirectory of the worktree with `workmux add --fork`, for Claude Code and Codex. The forked agent starts at the root of the new worktree.
 - Show which project each agent belongs to in `workmux status --all`, plus its tmux session when the session name differs from the project.
 
 ## v0.1.276 (2026-10-14)

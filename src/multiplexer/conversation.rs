@@ -106,12 +106,58 @@ impl ClaudeForker {
         sessions.sort_by_key(|session| std::cmp::Reverse(session.timestamp));
         Ok(sessions)
     }
+
+    /// List sessions started in `worktree_path` or any directory below it,
+    /// sorted by mtime descending.
+    ///
+    /// Claude Code keys a project by the directory it was launched in, so a
+    /// session started in a subdirectory lives in a project dir whose encoded
+    /// name extends the worktree's. Encoding is lossy (`project-2` and
+    /// `project/2` share a name), so those sessions are kept only when the
+    /// `cwd` they recorded lies inside the worktree.
+    fn list_worktree_sessions(&self, worktree_path: &Path) -> Result<Vec<SessionInfo>> {
+        let mut sessions = self.list_sessions(&self.project_dir_for(worktree_path))?;
+
+        let projects_dir = self.projects_dir();
+        if projects_dir.is_dir() {
+            let subdir_prefix = format!("{}-", Self::encode_path(worktree_path));
+            for entry in fs::read_dir(&projects_dir)? {
+                let path = entry?.path();
+                let is_candidate = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(&subdir_prefix));
+                if !is_candidate || !path.is_dir() {
+                    continue;
+                }
+                sessions.extend(self.list_sessions(&path)?.into_iter().filter(|session| {
+                    Self::session_cwd(&session.path)
+                        .is_some_and(|cwd| path_within(&cwd, worktree_path))
+                }));
+            }
+        }
+
+        sessions.sort_by_key(|session| std::cmp::Reverse(session.timestamp));
+        Ok(sessions)
+    }
+
+    /// Read the working directory from the first transcript entry that
+    /// records one. Leading metadata entries carry no `cwd`.
+    fn session_cwd(path: &Path) -> Option<PathBuf> {
+        let file = fs::File::open(path).ok()?;
+        BufReader::new(file)
+            .lines()
+            .map_while(Result::ok)
+            .find_map(|line| {
+                let entry: serde_json::Value = serde_json::from_str(&line).ok()?;
+                entry.get("cwd")?.as_str().map(PathBuf::from)
+            })
+    }
 }
 
 impl ConversationForker for ClaudeForker {
     fn find_latest_conversation(&self, worktree_path: &Path) -> Result<Option<SessionInfo>> {
-        let project_dir = self.project_dir_for(worktree_path);
-        let sessions = self.list_sessions(&project_dir)?;
+        let sessions = self.list_worktree_sessions(worktree_path)?;
         Ok(sessions.into_iter().next())
     }
 
@@ -120,12 +166,11 @@ impl ConversationForker for ClaudeForker {
         worktree_path: &Path,
         session_id: &str,
     ) -> Result<Option<SessionInfo>> {
-        let project_dir = self.project_dir_for(worktree_path);
-        let sessions = self.list_sessions(&project_dir)?;
-        // Match by exact ID or prefix
-        Ok(sessions
-            .into_iter()
-            .find(|s| s.id == session_id || s.id.starts_with(session_id)))
+        let sessions = self.list_worktree_sessions(worktree_path)?;
+        if let Some(exact) = sessions.iter().find(|s| s.id == session_id) {
+            return Ok(Some(exact.clone()));
+        }
+        Ok(sessions.into_iter().find(|s| s.id.starts_with(session_id)))
     }
 
     fn prepare_fork(&self, session: &SessionInfo, target_worktree: &Path) -> Result<String> {
@@ -254,7 +299,8 @@ impl CodexForker {
     }
 
     /// Return the session as a fork candidate when the rollout is interactive
-    /// and was recorded in `worktree_path`, carrying the recorded session ID.
+    /// and was recorded in `worktree_path` or below it, carrying the recorded
+    /// session ID.
     fn fork_candidate(session: &SessionInfo, worktree_path: &Path) -> Option<SessionInfo> {
         let meta = Self::read_session_meta(&session.path)?;
         if !meta.interactive {
@@ -263,7 +309,7 @@ impl CodexForker {
         if !meta
             .cwd
             .as_deref()
-            .is_some_and(|cwd| paths_match(cwd, worktree_path))
+            .is_some_and(|cwd| path_within(cwd, worktree_path))
         {
             return None;
         }
@@ -371,13 +417,14 @@ fn collect_rollouts(dir: &Path, sessions: &mut Vec<SessionInfo>) -> Result<()> {
     Ok(())
 }
 
-/// Compare paths, resolving symlinks so `/tmp` and `/private/tmp` agree.
-fn paths_match(left: &Path, right: &Path) -> bool {
-    if left == right {
+/// Whether `path` is `root` or lies below it, resolving symlinks so `/tmp`
+/// and `/private/tmp` agree.
+fn path_within(path: &Path, root: &Path) -> bool {
+    if path.starts_with(root) {
         return true;
     }
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
+    match (path.canonicalize(), root.canonicalize()) {
+        (Ok(path), Ok(root)) => path.starts_with(root),
         _ => false,
     }
 }
@@ -760,6 +807,40 @@ mod tests {
     }
 
     #[test]
+    fn test_codex_find_latest_conversation_includes_subdirectories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let codex_home = tmp.path().join("codex");
+        let worktree = tmp.path().join("project");
+        let subdir = worktree.join("packages").join("app");
+        let sibling = tmp.path().join("project-2");
+        fs::create_dir_all(&subdir).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+
+        write_codex_rollout(
+            &codex_home,
+            "2026-08-11",
+            "11111111-1111-1111-1111-111111111111",
+            &subdir,
+            serde_json::json!("cli"),
+            60,
+        );
+        write_codex_rollout(
+            &codex_home,
+            "2026-08-12",
+            "22222222-2222-2222-2222-222222222222",
+            &sibling,
+            serde_json::json!("cli"),
+            10,
+        );
+
+        let session = codex_forker(&codex_home, None)
+            .find_latest_conversation(&worktree)
+            .unwrap()
+            .expect("expected the session recorded in a subdirectory");
+        assert_eq!(session.id, "11111111-1111-1111-1111-111111111111");
+    }
+
+    #[test]
     fn test_codex_prepare_fork_leaves_parent_rollout_untouched() {
         let tmp = tempfile::tempdir().unwrap();
         let codex_home = tmp.path().join("codex");
@@ -855,5 +936,105 @@ mod tests {
             .unwrap();
         assert!(session.is_some());
         assert_eq!(session.unwrap().id, "abc123-def456");
+    }
+
+    /// Write a Claude transcript into the project dir for `launch_dir`, with
+    /// the metadata entries Claude writes before the first one carrying `cwd`.
+    fn write_claude_session(
+        forker: &ClaudeForker,
+        launch_dir: &Path,
+        session_id: &str,
+        modified_offset_secs: u64,
+    ) -> PathBuf {
+        let project_dir = forker.project_dir_for(launch_dir);
+        fs::create_dir_all(&project_dir).unwrap();
+        let path = project_dir.join(format!("{}.jsonl", session_id));
+        let lines = [
+            serde_json::json!({"type": "permission-mode", "permissionMode": "default"}),
+            serde_json::json!({"type": "user", "cwd": launch_dir, "sessionId": session_id}),
+        ];
+        let body: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+        fs::write(&path, body.join("\n") + "\n").unwrap();
+
+        let modified =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(modified_offset_secs);
+        filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(modified)).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_find_latest_conversation_in_subdirectory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let forker = ClaudeForker {
+            config_dir: tmp.path().to_path_buf(),
+        };
+        write_claude_session(&forker, Path::new("/test/project/packages/app"), "sub", 10);
+
+        let session = forker
+            .find_latest_conversation(Path::new("/test/project"))
+            .unwrap()
+            .expect("expected the session started in a subdirectory");
+        assert_eq!(session.id, "sub");
+    }
+
+    #[test]
+    fn test_find_latest_conversation_ignores_sibling_with_shared_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let forker = ClaudeForker {
+            config_dir: tmp.path().to_path_buf(),
+        };
+        write_claude_session(&forker, Path::new("/test/project-2"), "sibling", 10);
+        write_claude_session(&forker, Path::new("/test/project__worktrees/x"), "wt", 10);
+
+        assert!(
+            forker
+                .find_latest_conversation(Path::new("/test/project"))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_find_latest_conversation_across_root_and_subdirectories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let forker = ClaudeForker {
+            config_dir: tmp.path().to_path_buf(),
+        };
+        write_claude_session(&forker, Path::new("/test/project"), "root-old", 60);
+        write_claude_session(
+            &forker,
+            Path::new("/test/project/packages/app"),
+            "sub-new",
+            10,
+        );
+        write_claude_session(&forker, Path::new("/test/project/docs"), "sub-older", 30);
+
+        let session = forker
+            .find_latest_conversation(Path::new("/test/project"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.id, "sub-new");
+    }
+
+    #[test]
+    fn test_find_conversation_in_subdirectory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let forker = ClaudeForker {
+            config_dir: tmp.path().to_path_buf(),
+        };
+        write_claude_session(&forker, Path::new("/test/project"), "abc123-root", 60);
+        let sub_path = write_claude_session(
+            &forker,
+            Path::new("/test/project/packages/app"),
+            "def456-sub",
+            10,
+        );
+
+        let session = forker
+            .find_conversation(Path::new("/test/project"), "def456")
+            .unwrap()
+            .expect("expected a prefix match in the subdirectory project");
+        assert_eq!(session.id, "def456-sub");
+        assert_eq!(session.path, sub_path);
     }
 }
