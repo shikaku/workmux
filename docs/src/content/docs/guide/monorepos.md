@@ -30,6 +30,9 @@ When using a nested config:
 - **Working directory**: The tmux window opens in the subdirectory (e.g., `backend/`) within the new worktree, not the worktree root
 - **File operations**: `files.copy` and `files.symlink` paths are relative to the config directory
 - **Hooks**: Run with the subdirectory as the working directory
+- **Forking**: `--fork` resumes the conversation in the subdirectory
+
+Nested configs do not have to be committed. When a linked worktree has no config of its own, workmux looks in the main worktree from the same subdirectory upward, so running from `backend/` in any worktree uses the main worktree's `backend/.workmux.yaml`.
 
 ### Example nested config
 

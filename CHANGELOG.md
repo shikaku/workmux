@@ -23,7 +23,9 @@ editUrl: https://github.com/raine/workmux/edit/main/CHANGELOG.md
 
 ## Unreleased
 
-- Find conversations started in a subdirectory of the worktree with `workmux add --fork`, for Claude Code and Codex. The forked agent starts at the root of the new worktree.
+- Find conversations started in a subdirectory of the worktree with `workmux add --fork`, for Claude Code and Codex.
+- Use the nearest [nested config](https://workmux.raine.dev/guide/monorepos/#nested-configuration) from the main worktree when running from a subdirectory of a linked worktree that has no config of its own. Before, only the main worktree's root config was used, so the window opened at the worktree root.
+- Resume `workmux add --fork` conversations in the directory where the new window opens, so a fork from a nested config's subdirectory continues there.
 - Show which project each agent belongs to in `workmux status --all`, plus its tmux session when the session name differs from the project.
 
 ## v0.1.276 (2026-10-14)

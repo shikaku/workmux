@@ -79,7 +79,7 @@ To fork a specific session (not the most recent), use `--fork=<session-id>` with
 workmux add my-branch --fork=abc123
 ```
 
-Supports Claude Code and Codex conversations. Conversations started in a subdirectory of the worktree are included, and the forked agent starts at the root of the new worktree. The parent conversation is left as it was, so forking never disturbs the worktree you started from.
+Supports Claude Code and Codex conversations. Conversations started in a subdirectory of the worktree are included. The forked agent starts where the new window opens: the subdirectory of a [nested config](/guide/monorepos/#nested-configuration), or the worktree root. The parent conversation is left as it was, so forking never disturbs the worktree you started from.
 
 Claude Code has no cross-project resume, so workmux copies the conversation files into the new worktree's project directory and launches `claude --resume <session-id>`. Codex forks natively, so workmux resolves which session to fork and launches `codex fork -C <worktree> <session-id>`, which keeps the forked conversation in the new worktree.
 
