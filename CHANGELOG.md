@@ -22,6 +22,12 @@ editUrl: https://github.com/raine/workmux/edit/main/CHANGELOG.md
 <!-- skipped: v0.1.25 -->
 <!-- skipped: v0.1.8 -->
 
+## Unreleased
+
+- Fix: Find conversations started in a subdirectory of the worktree with `workmux add --fork`, for Claude Code, Codex and Pi.
+- Fix: Use the nearest [nested config](https://workmux.dev/guide/monorepos/#nested-configuration) from the main worktree when running from a subdirectory of a linked worktree that has no config of its own. Before, only the main worktree's root config was used, so the window opened at the worktree root.
+- UX: Resume `workmux add --fork` conversations in the directory where the new window opens, so a fork from a nested config's subdirectory continues there.
+
 ## v0.1.277 (2026-10-23)
 
 <!-- highlight: Sidebar views -->

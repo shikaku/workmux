@@ -2543,7 +2543,8 @@ pub(crate) fn discover_project_config(start_dir: &Path) -> anyhow::Result<Projec
         return Ok(discovery);
     };
     let repo_root = repo_root.canonicalize()?;
-    let mut dir = start_dir.canonicalize()?;
+    let start_dir = start_dir.canonicalize()?;
+    let mut dir = start_dir.clone();
     let repository = git::RepositoryIdentity::discover(&repo_root)?;
     let linked = repository.admin_dir != repository.common_dir;
     use std::os::unix::fs::MetadataExt;
@@ -2582,18 +2583,32 @@ pub(crate) fn discover_project_config(start_dir: &Path) -> anyhow::Result<Projec
     }
 
     // A regular main worktree cannot fall back to a different main worktree.
+    // Untracked configs exist only in the main worktree, so look there from
+    // the same subdirectory up, as the walk above does in this worktree.
     if linked {
         let main_root = git::get_main_worktree_root_in(Some(&repo_root))?.canonicalize()?;
         discovery.main_root = Some(main_root.clone());
         if main_root != repo_root {
-            for name in &config_names {
-                let candidate = main_root.join(name);
-                if candidate.try_exists()? {
-                    return discovery.with_location(ConfigLocation {
-                        config_path: candidate,
-                        config_dir: main_root,
-                        rel_dir: PathBuf::new(),
-                    });
+            let mut rel_dir = start_dir.strip_prefix(&repo_root)?.to_path_buf();
+            loop {
+                // `join("")` would append a trailing separator.
+                let config_dir = if rel_dir.as_os_str().is_empty() {
+                    main_root.clone()
+                } else {
+                    main_root.join(&rel_dir)
+                };
+                for name in &config_names {
+                    let candidate = config_dir.join(name);
+                    if candidate.try_exists()? {
+                        return discovery.with_location(ConfigLocation {
+                            config_path: candidate,
+                            config_dir,
+                            rel_dir,
+                        });
+                    }
+                }
+                if !rel_dir.pop() {
+                    break;
                 }
             }
         }
@@ -5395,6 +5410,42 @@ agents:
         fs::remove_file(linked.join(".workmux.yaml")).unwrap();
         fs::remove_file(repo.path().join(".workmux.yml")).unwrap();
         assert!(find_project_config(&linked).unwrap().is_none());
+        println!("{}", crate::test_support::ISOLATED_TEST_CANARY);
+    }
+
+    #[test]
+    fn project_discovery_fallback_keeps_subdirectory() {
+        const TEST: &str = "config::tests::project_discovery_fallback_keeps_subdirectory";
+        if !crate::test_support::is_isolated_child(TEST) {
+            let cwd = git_tempdir();
+            crate::test_support::run_isolated_test(TEST, cwd.path(), &[]);
+            return;
+        }
+        let repo = tempfile::tempdir().unwrap();
+        crate::test_support::init_repo(repo.path());
+        let outside = tempfile::tempdir().unwrap();
+        let linked = outside.path().join("linked");
+        crate::test_support::run_git(
+            repo.path(),
+            &["worktree", "add", "-b", "linked", linked.to_str().unwrap()],
+        );
+        let package = std::path::Path::new("packages").join("app");
+        let main_package = repo.path().join(&package);
+        let linked_src = linked.join(&package).join("src");
+        fs::create_dir_all(&main_package).unwrap();
+        fs::create_dir_all(&linked_src).unwrap();
+        fs::write(repo.path().join(".workmux.yaml"), "agent: root").unwrap();
+        fs::write(main_package.join(".workmux.yaml"), "agent: app").unwrap();
+
+        let nested = find_project_config(&linked_src).unwrap().unwrap();
+        assert_eq!(nested.config_dir, main_package.canonicalize().unwrap());
+        assert_eq!(nested.rel_dir, package);
+
+        let other = linked.join("packages").join("other");
+        fs::create_dir_all(&other).unwrap();
+        let root = find_project_config(&other).unwrap().unwrap();
+        assert_eq!(root.config_dir, repo.path().canonicalize().unwrap());
+        assert!(root.rel_dir.as_os_str().is_empty());
         println!("{}", crate::test_support::ISOLATED_TEST_CANARY);
     }
 

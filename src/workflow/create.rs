@@ -579,19 +579,39 @@ fn create_impl(
     // (prompt files, tmux setup, hooks, etc.)
     drop(_config_lock);
 
+    // Compute working directory from config location
+    let working_dir = if !context.config_rel_dir.as_os_str().is_empty() {
+        let subdir_in_worktree = worktree_path.join(&context.config_rel_dir);
+        // Only use subdir if it exists (may not exist if base branch lacks it)
+        if subdir_in_worktree.exists() {
+            Some(subdir_in_worktree)
+        } else {
+            debug!(
+                subdir = %context.config_rel_dir.display(),
+                "create:config subdir does not exist in worktree, falling back to root"
+            );
+            None
+        }
+    } else {
+        None
+    };
+
     // Fork conversation into the new worktree if requested.
     // Must happen after git::create_worktree() (path is finalized) and before
     // setup_environment() (which launches the agent with resume args).
+    // Claude resumes only sessions stored for the directory it starts in, so
+    // the fork goes where the panes will open.
     if let Some(fork) = fork_source {
+        let fork_dir = working_dir.as_deref().unwrap_or(&worktree_path);
         let session_id = fork
             .forker
-            .prepare_fork(&fork.session, &worktree_path)
+            .prepare_fork(&fork.session, fork_dir)
             .context("Failed to fork conversation into new worktree")?;
         options.resume_mode =
             crate::multiplexer::types::ResumeMode::ForkSession(session_id.clone());
         info!(
             session_id = %session_id,
-            target = %worktree_path.display(),
+            target = %fork_dir.display(),
             "create:forked conversation into new worktree"
         );
     }
@@ -613,23 +633,6 @@ fn create_impl(
         None
     } else {
         prompt_file_path
-    };
-
-    // Compute working directory from config location
-    let working_dir = if !context.config_rel_dir.as_os_str().is_empty() {
-        let subdir_in_worktree = worktree_path.join(&context.config_rel_dir);
-        // Only use subdir if it exists (may not exist if base branch lacks it)
-        if subdir_in_worktree.exists() {
-            Some(subdir_in_worktree)
-        } else {
-            debug!(
-                subdir = %context.config_rel_dir.display(),
-                "create:config subdir does not exist in worktree, falling back to root"
-            );
-            None
-        }
-    } else {
-        None
     };
 
     // Use config_source_dir for file operations (the directory where config was found)
