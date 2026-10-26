@@ -183,7 +183,7 @@ impl GitBranchParser {
 impl_passthrough_typed_value_parser!(GitBranchParser);
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = env!("WORKMUX_VERSION"), about, long_about = None)]
 #[command(name = "workmux")]
 #[command(about = "An opinionated workflow tool that orchestrates git worktrees and tmux")]
 #[command(help_template = "\
