@@ -49,6 +49,10 @@ build:
 install:
     cargo install --offline --path . --locked
 
+# Install the fork's release binary into ~/.local/bin from local source
+install-local:
+    scripts/install-local
+
 # Install release binary globally from GitHub Actions
 install-ci:
     scripts/install-ci

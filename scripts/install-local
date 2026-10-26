@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+# Build the release binary from this checkout and install it into
+# ~/.local/bin. The binary is swapped in with a rename, so running sidebars
+# keep their old copy until they restart.
+
+set -euo pipefail
+
+readonly install_dir="$HOME/.local/bin"
+readonly target="$install_dir/workmux"
+readonly staged="$install_dir/.workmux.new"
+
+cd "$(dirname "$0")/.."
+cargo build --release --locked
+mkdir -p "$install_dir"
+cp target/release/workmux "$staged"
+mv -f "$staged" "$target"
+"$target" --version

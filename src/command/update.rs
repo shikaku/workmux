@@ -5,6 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const REPO: &str = "raine/workmux";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Fork builds are installed from source, so an upstream release must not
+/// replace them.
+const FORK_BUILD: bool = true;
+const FORK_INSTALL_CMD: &str = "scripts/install-local";
 const CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60;
 const NOTIFY_COOLDOWN_SECS: u64 = 7 * 24 * 60 * 60;
 const NOTIFY_BURST_COUNT: u64 = 3;
@@ -223,6 +227,13 @@ fn do_update(
 }
 
 pub fn run() -> Result<()> {
+    if FORK_BUILD {
+        bail!(
+            "workmux {} is a fork build; `workmux update` would replace it with the upstream release. Sync the fork and run `{FORK_INSTALL_CMD}` instead.",
+            env!("WORKMUX_VERSION")
+        );
+    }
+
     let current_exe =
         std::env::current_exe().context("Could not determine current executable path")?;
 
@@ -365,20 +376,27 @@ pub fn check_and_notify(config: &crate::config::Config) {
                 count
             };
 
-            let is_brew = std::env::current_exe()
-                .ok()
-                .and_then(|p| std::fs::canonicalize(&p).ok())
-                .is_some_and(|p| is_homebrew_install(&p));
-
-            let update_cmd = if is_brew {
-                "brew upgrade workmux"
+            if FORK_BUILD {
+                eprintln!(
+                    "Upstream released workmux v{latest} (this build: v{}). Sync the fork and run `{FORK_INSTALL_CMD}`.",
+                    env!("WORKMUX_VERSION")
+                );
             } else {
-                "workmux update"
-            };
+                let is_brew = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| std::fs::canonicalize(&p).ok())
+                    .is_some_and(|p| is_homebrew_install(&p));
 
-            eprintln!(
-                "Update available: workmux v{CURRENT_VERSION} -> v{latest} (run `{update_cmd}`)"
-            );
+                let update_cmd = if is_brew {
+                    "brew upgrade workmux"
+                } else {
+                    "workmux update"
+                };
+
+                eprintln!(
+                    "Update available: workmux v{CURRENT_VERSION} -> v{latest} (run `{update_cmd}`)"
+                );
+            }
 
             cache.last_notified = Some(now);
             cache.notify_count = Some(count + 1);
