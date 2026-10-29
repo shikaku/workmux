@@ -43,6 +43,15 @@ pub(crate) enum Step {
     Before { pane: usize, child: usize },
 }
 
+impl Step {
+    /// The layout pane the step opens.
+    fn pane(self) -> usize {
+        match self {
+            Step::After { pane, .. } | Step::Before { pane, .. } => pane,
+        }
+    }
+}
+
 /// The steps that open the missing creatable panes, and the ones no step can
 /// place. `targets[k]` is the pane pane `k` splits from (None for the first).
 pub(crate) fn plan(
@@ -199,13 +208,13 @@ pub(crate) fn closable<'a>(
     window
         .iter()
         .filter(|pane| !used.contains(&pane.pane_id.as_str()) && !agents.contains(&pane.pane_id))
-        .filter(|pane| {
-            pane.name.as_ref().is_some_and(|name| known.contains(name))
-                || known.contains(&pane.title)
-        })
+        .filter(|pane| known.contains(&pane_label(pane)))
         .collect()
 }
 
+/// A pane's name: the one `set_pane_name` gave it, else its title (a pane
+/// opened before panes had names). A program can change the title, never the
+/// name, so a named pane is not told by its title.
 fn pane_label(pane: &WindowPane) -> String {
     pane.name.clone().unwrap_or_else(|| pane.title.clone())
 }
@@ -235,9 +244,12 @@ pub fn run(
         .into_iter()
         .filter(|pane| pane.role.as_deref() != Some(SIDEBAR_ROLE))
         .collect();
+    let agent_panes = agent_pane_ids(mux.as_ref(), &window)?;
+    // The worktree is the agent's: a strip or a shell may have cd'd elsewhere.
     let anchor = window
         .iter()
-        .find(|pane| pane.pane_id == target)
+        .find(|pane| agent_panes.contains(&pane.pane_id))
+        .or_else(|| window.iter().find(|pane| pane.pane_id == target))
         .or_else(|| window.first())
         .ok_or_else(|| anyhow!("The window of {target} has no panes but the sidebar"))?;
     let start_dir = anchor.current_path.clone();
@@ -282,7 +294,6 @@ pub fn run(
         })
         .collect();
 
-    let agent_panes = agent_pane_ids(mux.as_ref(), &window)?;
     let mut used: Vec<&str> = Vec::new();
     let mut opened: Vec<Option<String>> = identities
         .iter()
@@ -291,9 +302,7 @@ pub fn run(
                 !used.contains(&pane.pane_id.as_str())
                     && match identity {
                         Identity::Agent => agent_panes.contains(&pane.pane_id),
-                        Identity::Named(name) => {
-                            pane.name.as_ref() == Some(name) || &pane.title == name
-                        }
+                        Identity::Named(name) => &pane_label(pane) == name,
                         Identity::Unknown => false,
                     }
             })?;
@@ -322,28 +331,20 @@ pub fn run(
         .map(|identity| matches!(identity, Identity::Named(_)))
         .collect();
     let (steps, unplaced) = plan(&targets, &present, &creatable);
-    let step_pane = |step: &Step| match *step {
-        Step::After { pane, .. } | Step::Before { pane, .. } => pane,
-    };
 
-    let mut added = Vec::new();
-    if dry_run {
-        added = steps
-            .iter()
-            .map(|step| label(&identities[step_pane(step)], step_pane(step)))
-            .collect();
-    } else if !steps.is_empty()
+    if !steps.is_empty()
         && config.sandbox.is_enabled()
         && matches!(config.sandbox.target(), SandboxTarget::All)
     {
         bail!("workmux panes does not open sandboxed panes");
     }
 
-    let closed: Vec<String> = to_close.iter().map(|pane| pane_label(pane)).collect();
-    // Closed first: the panes that open size themselves on what is left.
-    for pane in to_close.iter().filter(|_| !dry_run) {
-        mux.kill_pane(&pane.pane_id)
-            .with_context(|| format!("Failed to close {}", pane_label(pane)))?;
+    let mut added = Vec::new();
+    if dry_run {
+        added = steps
+            .iter()
+            .map(|step| label(&identities[step.pane()], step.pane()))
+            .collect();
     }
     let is_closed = |id: &str| to_close.iter().any(|pane| pane.pane_id == id);
     // A closed active pane hands the focus to the layout's focus pane.
@@ -372,6 +373,12 @@ pub fn run(
         .with_context(|| "Failed to open a pane")?;
         opened[pane] = Some(new_id);
         added.push(label(&identities[pane], pane));
+    }
+    // Closed after the opening went through: a failed switch keeps what ran.
+    let closed: Vec<String> = to_close.iter().map(|pane| pane_label(pane)).collect();
+    for pane in to_close.iter().filter(|_| !dry_run) {
+        mux.kill_pane(&pane.pane_id)
+            .with_context(|| format!("Failed to close {}", pane_label(pane)))?;
     }
     if !dry_run
         && !(steps.is_empty() && to_close.is_empty())
@@ -452,9 +459,7 @@ fn open_pane(
     config: &Config,
     shell: &str,
 ) -> Result<(usize, String)> {
-    let pane_index = match step {
-        Step::After { pane, .. } | Step::Before { pane, .. } => pane,
-    };
+    let pane_index = step.pane();
     let pane = effective[pane_index].0;
     let resolved = util::resolve_pane_command_with_config(
         pane.command.as_deref(),
@@ -572,6 +577,14 @@ mod tests {
             .collect();
         // The server and the second [code] go; the agent and the shell stay.
         assert_eq!(close, vec!["%2", "%3"]);
+    }
+
+    #[test]
+    fn a_named_pane_is_not_told_by_its_title() {
+        // A program in a "tests" pane set its title to a known name.
+        let window = vec![window_pane("%1", Some("tests"), "[code]")];
+        let known: HashSet<String> = ["[code]"].map(String::from).into();
+        assert!(closable(&window, &[], &known, &[]).is_empty());
     }
 
     #[test]
