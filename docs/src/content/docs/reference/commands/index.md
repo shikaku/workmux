@@ -16,7 +16,7 @@ description: Complete reference for all workmux commands
 | [`status`](/reference/commands/status/)           | Query tracked agent status                          |
 | [`open`](/reference/commands/open/)               | Open a tmux window for an existing worktree         |
 | [`close`](/reference/commands/close/)             | Close a worktree's tmux window (keeps worktree)     |
-| [`panes`](/reference/commands/panes/)             | Open the panes of a layout the window lacks         |
+| [`panes`](/reference/commands/panes/)             | Switch the current window to a layout              |
 | [`resurrect`](/reference/commands/resurrect/)     | Restore worktree windows after a crash              |
 | [`sync-files`](/reference/commands/sync-files/)   | Re-apply file operations to existing worktrees      |
 | [`path`](/reference/commands/path/)               | Get the filesystem path of a worktree               |

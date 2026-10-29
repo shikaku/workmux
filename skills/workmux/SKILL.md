@@ -180,15 +180,19 @@ workmux close <name>          # close tmux window, keep worktree
 
 ```bash
 workmux panes --list          # layout names: default, then the `layouts` keys
-workmux panes dev -n          # what would open
-workmux panes dev             # open the dev layout's missing panes (e.g. the server)
-workmux panes                 # reopen a closed pane of the default layout
+workmux panes dev -a -n       # what would open
+workmux panes dev -a          # open the dev layout's missing panes (e.g. the server)
+workmux panes -a              # reopen a closed pane of the default layout
 ```
 
 Runs in the current pane's window (`-t <pane>` for another). Open panes and
 what runs in them are left alone, and the agent is never started. Only panes
 with a `name` in the config are matched; use this instead of splitting panes
 by hand to run what the layout defines.
+
+Always pass `-a`. Without it `workmux panes <layout>` switches the window to
+that layout and closes the panes only other layouts have (`workmux panes`
+alone closes the dev server): do that only when the user asks for it.
 
 ### Interact with other agents
 
