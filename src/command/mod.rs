@@ -16,6 +16,7 @@ pub mod merge;
 pub mod node;
 pub mod open;
 pub mod pane_history;
+pub mod panes;
 pub mod path;
 pub mod reap_agents;
 pub mod rebase;
