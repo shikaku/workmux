@@ -254,7 +254,7 @@ workmux add my-feature -l design
 
 When `-l` is used, the layout's `panes` replace the top-level `panes` for that worktree. All other config (hooks, files, agent, etc.) comes from the top-level as usual. The `-l` flag cannot be combined with `--agent`.
 
-To add a layout's missing panes to a window that is already open, use [`workmux panes`](/reference/commands/panes/).
+To switch a window that is already open to another layout, use [`workmux panes`](/reference/commands/panes/).
 
 ### Windows
 

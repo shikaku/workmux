@@ -427,10 +427,13 @@ enum Commands {
         config: Option<PathBuf>,
     },
 
-    /// Open the panes of a layout that the current window lacks (tmux only)
+    /// Switch the current window to a layout (tmux only)
     ///
-    /// Panes are told apart by `name` (the agent pane by its agent): open ones
-    /// and their commands are left as they are, and the agent is never started.
+    /// Opens the layout's panes the window lacks and closes the panes only
+    /// other layouts of the config have. Panes are told apart by `name` (the
+    /// agent pane by its agent): open ones and their commands are left as they
+    /// are, the agent is never started or closed, and a pane no layout names
+    /// is never closed.
     Panes {
         /// Layout name from `layouts`; `default` or none for the top-level panes
         layout: Option<String>,
@@ -439,7 +442,11 @@ enum Commands {
         #[arg(long, conflicts_with = "layout")]
         list: bool,
 
-        /// Show which panes would open, without opening them
+        /// Only open the missing panes, close nothing
+        #[arg(short = 'a', long)]
+        add: bool,
+
+        /// Show which panes would open and close, without doing it
         #[arg(short = 'n', long)]
         dry_run: bool,
 
@@ -1174,9 +1181,10 @@ pub fn run() -> Result<()> {
         Commands::Panes {
             layout,
             list,
+            add,
             dry_run,
             target,
-        } => command::panes::run(layout.as_deref(), list, dry_run, target.as_deref()),
+        } => command::panes::run(layout.as_deref(), list, add, dry_run, target.as_deref()),
         Commands::Close { name } => command::close::run(name.as_deref()),
         Commands::Resurrect { dry_run } => command::resurrect::run(dry_run),
         Commands::Merge {
