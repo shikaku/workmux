@@ -99,6 +99,9 @@ Key flags:
 - `-e, --prompt-editor`: write prompt in $EDITOR
 - `-A, --auto-name`: generate branch name from prompt via LLM
 - `-a <agent>`: override the agent (can specify multiple for multi-worktree)
+- `-l, --layout <name>`: use a named layout from the config's `layouts`
+  instead of the default panes (for example `dev`, which adds the dev server
+  where a project defines it). Use it when the task needs the server running.
 - `-w, --with-changes`: move uncommitted changes to the new worktree
 - `--base <branch>`: branch from a specific base
 - `--name <name>`: override the worktree handle
@@ -172,6 +175,20 @@ workmux open --new            # force a new window (creates suffix -2, -3)
 workmux open <name> -p "..."  # open with a prompt for agent panes
 workmux close <name>          # close tmux window, keep worktree
 ```
+
+### Add a layout's missing panes to an open window
+
+```bash
+workmux panes --list          # layout names: default, then the `layouts` keys
+workmux panes dev -n          # what would open
+workmux panes dev             # open the dev layout's missing panes (e.g. the server)
+workmux panes                 # reopen a closed pane of the default layout
+```
+
+Runs in the current pane's window (`-t <pane>` for another). Open panes and
+what runs in them are left alone, and the agent is never started. Only panes
+with a `name` in the config are matched; use this instead of splitting panes
+by hand to run what the layout defines.
 
 ### Interact with other agents
 
