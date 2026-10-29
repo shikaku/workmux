@@ -427,6 +427,27 @@ enum Commands {
         config: Option<PathBuf>,
     },
 
+    /// Open the panes of a layout that the current window lacks (tmux only)
+    ///
+    /// Panes are told apart by `name` (the agent pane by its agent): open ones
+    /// and their commands are left as they are, and the agent is never started.
+    Panes {
+        /// Layout name from `layouts`; `default` or none for the top-level panes
+        layout: Option<String>,
+
+        /// List the layout names instead
+        #[arg(long, conflicts_with = "layout")]
+        list: bool,
+
+        /// Show which panes would open, without opening them
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+
+        /// A pane of the window to work on (defaults to the current pane)
+        #[arg(short = 't', long)]
+        target: Option<String>,
+    },
+
     /// Close a worktree's tmux window (keeps the worktree and branch)
     Close {
         /// Worktree name (defaults to current directory if omitted)
@@ -1150,6 +1171,12 @@ pub fn run() -> Result<()> {
                 config.as_deref(),
             )
         }
+        Commands::Panes {
+            layout,
+            list,
+            dry_run,
+            target,
+        } => command::panes::run(layout.as_deref(), list, dry_run, target.as_deref()),
         Commands::Close { name } => command::close::run(name.as_deref()),
         Commands::Resurrect { dry_run } => command::resurrect::run(dry_run),
         Commands::Merge {

@@ -165,6 +165,7 @@ export default defineConfig({
             { label: "status", slug: "reference/commands/status" },
             { label: "open", slug: "reference/commands/open" },
             { label: "close", slug: "reference/commands/close" },
+            { label: "panes", slug: "reference/commands/panes" },
             { label: "resurrect", slug: "reference/commands/resurrect" },
             { label: "sync-files", slug: "reference/commands/sync-files" },
             { label: "path", slug: "reference/commands/path" },

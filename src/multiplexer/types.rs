@@ -272,3 +272,18 @@ pub struct LivePaneInfo {
     /// do not number their windows.
     pub window_index: Option<u32>,
 }
+
+/// A pane of one window, as `workmux panes` matches it against a layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowPane {
+    pub pane_id: String,
+    /// workmux's own role for the pane (`sidebar`), if any.
+    pub role: Option<String>,
+    /// The name `set_pane_name` gave it, if any.
+    pub name: Option<String>,
+    pub title: String,
+    pub current_path: PathBuf,
+    pub width: u16,
+    pub height: u16,
+    pub is_active: bool,
+}

@@ -1175,7 +1175,9 @@ impl<'de> Deserialize<'de> for AgentEntry {
 pub struct PaneConfig {
     /// Optional display name for the pane.
     ///
-    /// Supported by the Zellij backend. Other backends may ignore this value.
+    /// Zellij shows it as the pane title; tmux keeps it in the
+    /// `@workmux_pane_name` pane option, which `workmux panes` matches panes
+    /// by. Other backends may ignore this value.
     #[serde(default)]
     pub name: Option<String>,
 

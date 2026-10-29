@@ -513,6 +513,14 @@ pub trait Multiplexer: Send + Sync {
         Ok(())
     }
 
+    /// List the panes of the window that holds `pane_id`.
+    fn window_panes(&self, _pane_id: &str) -> Result<Vec<WindowPane>> {
+        Err(anyhow!(
+            "listing a window's panes is not supported by the {} backend",
+            self.name()
+        ))
+    }
+
     /// Capture the content of a pane
     fn capture_pane(&self, pane_id: &str, lines: u16) -> Option<String>;
 
@@ -639,6 +647,23 @@ pub trait Multiplexer: Send + Sync {
         percentage: Option<u8>,
         command: Option<&str>,
     ) -> Result<String>;
+
+    /// Like `split_pane`, but the new pane goes before the target (above it
+    /// or to its left): for adding the pane a layout split the target from.
+    fn split_pane_before(
+        &self,
+        _target_pane_id: &str,
+        _direction: &SplitDirection,
+        _cwd: &Path,
+        _size: Option<u16>,
+        _percentage: Option<u8>,
+        _command: Option<&str>,
+    ) -> Result<String> {
+        Err(anyhow!(
+            "splitting before a pane is not supported by the {} backend",
+            self.name()
+        ))
+    }
 
     /// Setup panes in a window according to configuration.
     ///

@@ -176,7 +176,7 @@ Each pane supports:
 
 | Option       | Description                                                          | Default          |
 | ------------ | -------------------------------------------------------------------- | ---------------- |
-| `name`       | Pane display name (currently applied by the Zellij backend)          | ---              |
+| `name`       | Pane name (Zellij pane title; tmux `@workmux_pane_name`)             | ---              |
 | `command`    | Command to run (see [agent placeholders](#agent-placeholders) below) | Shell            |
 | `focus`      | Whether this pane receives focus                                     | `false`          |
 | `zoom`       | Zoom pane to fullscreen (implies `focus: true`)                      | `false`          |
@@ -253,6 +253,8 @@ workmux add my-feature -l design
 ```
 
 When `-l` is used, the layout's `panes` replace the top-level `panes` for that worktree. All other config (hooks, files, agent, etc.) comes from the top-level as usual. The `-l` flag cannot be combined with `--agent`.
+
+To add a layout's missing panes to a window that is already open, use [`workmux panes`](/reference/commands/panes/).
 
 ### Windows
 

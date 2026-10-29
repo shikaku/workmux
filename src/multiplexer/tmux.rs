@@ -31,6 +31,9 @@ const LIVE_PANE_ESCAPED_RECORD_SEPARATOR: &str = "\\036";
 const LIVE_PANE_ESCAPED_FIELD_SEPARATOR: &str = "\\037";
 const LIVE_PANE_FORMAT: &str = "\x1e#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_command}\x1f#{pane_current_path}\x1f#{pane_title}\x1f#{session_name}\x1f#{window_name}\x1f#{session_id}\x1f#{window_id}\x1f#{window_index}";
 const WINDOW_OWNERSHIP_FORMAT: &str = "\x1e#{window_id}\x1f#{window_name}\x1f#{session_name}\x1f#{@workmux_token}\x1f#{pane_current_path}";
+/// The pane option `set_pane_name` writes.
+const PANE_NAME_OPTION: &str = "@workmux_pane_name";
+const WINDOW_PANE_FORMAT: &str = "\x1e#{pane_id}\x1f#{@workmux_role}\x1f#{@workmux_pane_name}\x1f#{pane_width}\x1f#{pane_height}\x1f#{pane_active}\x1f#{pane_current_path}\x1f#{pane_title}";
 macro_rules! server_boot_format {
     () => {
         "#{start_time}:#{pid}"
@@ -265,6 +268,35 @@ fn parse_window_ownership_record(line: &str) -> Option<WindowOwnershipRecord> {
         token: (!parts[3].is_empty()).then(|| parts[3].to_string()),
         pane_path: PathBuf::from(parts[4]),
     })
+}
+
+fn parse_window_pane(line: &str) -> Option<WindowPane> {
+    let parts = live_pane_fields(line);
+    if parts.len() != 8 || parts[0].is_empty() {
+        return None;
+    }
+    let nonempty = |s: &str| (!s.is_empty()).then(|| s.to_string());
+
+    Some(WindowPane {
+        pane_id: parts[0].to_string(),
+        role: nonempty(parts[1]),
+        name: nonempty(parts[2]),
+        width: parts[3].parse().ok()?,
+        height: parts[4].parse().ok()?,
+        is_active: parts[5] == "1",
+        current_path: PathBuf::from(parts[6]),
+        title: parts[7].to_string(),
+    })
+}
+
+fn parse_window_panes(output: &str) -> Result<Vec<WindowPane>> {
+    live_pane_records(output)
+        .into_iter()
+        .map(|line| {
+            parse_window_pane(line)
+                .ok_or_else(|| anyhow!("tmux returned malformed pane data: {line:?}"))
+        })
+        .collect()
 }
 
 fn parse_window_ownership_records(output: &str) -> Result<Vec<WindowOwnershipRecord>> {
@@ -721,11 +753,14 @@ impl TmuxBackend {
         Ok(())
     }
 
-    /// Internal split pane implementation.
+    /// Internal split pane implementation. `before` puts the new pane above or
+    /// left of the target (`split-window -b`).
+    #[allow(clippy::too_many_arguments)]
     fn split_pane_internal(
         &self,
         target_pane_id: &str,
         direction: &ConfigSplitDirection,
+        before: bool,
         working_dir: &Path,
         size: Option<u16>,
         percentage: Option<u8>,
@@ -756,6 +791,9 @@ impl TmuxBackend {
             "-F",
             "#{pane_id}",
         ]);
+        if before {
+            cmd = cmd.arg("-b");
+        }
 
         let size_arg;
         if let Some(p) = percentage {
@@ -1559,7 +1597,46 @@ impl Multiplexer for TmuxBackend {
         percentage: Option<u8>,
         command: Option<&str>,
     ) -> Result<String> {
-        self.split_pane_internal(target_pane_id, direction, cwd, size, percentage, command)
+        self.split_pane_internal(
+            target_pane_id,
+            direction,
+            false,
+            cwd,
+            size,
+            percentage,
+            command,
+        )
+    }
+
+    fn split_pane_before(
+        &self,
+        target_pane_id: &str,
+        direction: &crate::config::SplitDirection,
+        cwd: &Path,
+        size: Option<u16>,
+        percentage: Option<u8>,
+        command: Option<&str>,
+    ) -> Result<String> {
+        self.split_pane_internal(
+            target_pane_id,
+            direction,
+            true,
+            cwd,
+            size,
+            percentage,
+            command,
+        )
+    }
+
+    // A pane option, not the title: the title is the program's to change.
+    fn set_pane_name(&self, pane_id: &str, name: &str) -> Result<()> {
+        self.tmux_cmd(&["set-option", "-p", "-t", pane_id, PANE_NAME_OPTION, name])
+    }
+
+    fn window_panes(&self, pane_id: &str) -> Result<Vec<WindowPane>> {
+        let output = self.tmux_query(&["list-panes", "-t", pane_id, "-F", WINDOW_PANE_FORMAT])?;
+
+        parse_window_panes(&output)
     }
 
     // === State Reconciliation ===
