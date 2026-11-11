@@ -601,7 +601,12 @@ impl SidebarApp {
 
         // Manual selection belongs to direct sidebar interaction. When an agent
         // pane has focus, the selection follows the agent in the host window.
-        if self.host_window_active && host_sidebar_active == Some(false) {
+        // So it does while the window is not shown: the frame tmux shows on
+        // the way back is then already the host's. A hidden sidebar used to
+        // keep the agent it switched to, with its scroll, and jumped to the
+        // host on the first snapshot after the switch; a click in between hit
+        // the row the jump had moved under it.
+        if !self.host_window_active || host_sidebar_active == Some(false) {
             self.selection_mode = SelectionMode::FollowHost;
         }
 
@@ -2568,17 +2573,23 @@ mod tests {
     }
 
     #[test]
-    fn returning_to_agent_window_resets_sidebar_viewport() {
+    fn hidden_sidebar_follows_its_host_before_the_window_returns() {
         let mut app = selection_app();
         app.select_index(1);
         *app.list_state.offset_mut() = 1;
-        let mut inactive = selection_snapshot(&["%other-agent"]);
+        // The click switched to the other window, so this one is hidden and
+        // its sidebar pane is still the active pane of its window.
+        let mut inactive = selection_snapshot(&["%sidebar", "%other-agent"]);
         inactive.active_windows.clear();
         app.apply_snapshot(inactive);
-        assert_eq!(app.list_state.offset(), 1);
+
+        assert_eq!(app.list_state.selected(), Some(0));
+        assert_eq!(app.list_state.offset(), 0);
+        assert_eq!(app.selection_mode, SelectionMode::FollowHost);
 
         app.apply_snapshot(selection_snapshot(&["%host-agent"]));
 
+        assert_eq!(app.list_state.selected(), Some(0));
         assert_eq!(app.list_state.offset(), 0);
         assert_eq!(app.selection_mode, SelectionMode::FollowHost);
     }

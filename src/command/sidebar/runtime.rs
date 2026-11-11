@@ -35,11 +35,32 @@ impl Drop for TerminalGuard {
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum AppEvent {
     /// A new snapshot is available in the SnapshotHandle.
     SnapshotReady,
     /// A terminal input event (key press, resize, etc.).
     Input(Event),
+}
+
+/// Order a batch of pending events: input first, as it arrived, then one
+/// snapshot if any arrived. Input was aimed at the frame on screen, which
+/// predates a snapshot that arrived since the last draw; applying that
+/// snapshot first moved the rows under a click.
+fn input_before_snapshot(events: impl IntoIterator<Item = AppEvent>) -> Vec<AppEvent> {
+    let mut snapshot = false;
+    let mut ordered: Vec<AppEvent> = events
+        .into_iter()
+        .filter(|event| {
+            let is_snapshot = matches!(event, AppEvent::SnapshotReady);
+            snapshot |= is_snapshot;
+            !is_snapshot
+        })
+        .collect();
+    if snapshot {
+        ordered.push(AppEvent::SnapshotReady);
+    }
+    ordered
 }
 
 /// Spawn a thread that reads terminal events and forwards them.
@@ -157,20 +178,12 @@ pub fn run_sidebar() -> Result<()> {
             }
         };
 
-        // Process first event
-        if let Some(ev) = first_event {
-            process_event(
-                ev,
-                &mut app,
-                &snapshot_handle,
-                &mut last_pane_check,
-                &mut needs_render,
-                &mut needs_clear,
-            );
-        }
-
-        // Drain all pending events to coalesce (avoids multiple redraws)
-        while let Ok(ev) = rx.try_recv() {
+        // Process the first event and drain all pending ones to coalesce
+        // (avoids multiple redraws).
+        let pending = first_event
+            .into_iter()
+            .chain(std::iter::from_fn(|| rx.try_recv().ok()));
+        for ev in input_before_snapshot(pending) {
             process_event(
                 ev,
                 &mut app,
@@ -464,6 +477,40 @@ mod tests {
             location: String::new(),
             message: String::new(),
         })
+    }
+
+    #[test]
+    fn input_is_handled_before_a_snapshot_that_arrived_with_it() {
+        use crossterm::event::{KeyEvent, MouseEvent};
+
+        let click = AppEvent::Input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        }));
+        let key = || {
+            AppEvent::Input(Event::Key(KeyEvent::new(
+                KeyCode::Char('j'),
+                KeyModifiers::NONE,
+            )))
+        };
+
+        let ordered = input_before_snapshot([
+            AppEvent::SnapshotReady,
+            click,
+            AppEvent::SnapshotReady,
+            key(),
+        ]);
+
+        assert_eq!(ordered.len(), 3);
+        assert!(matches!(
+            ordered[0],
+            AppEvent::Input(Event::Mouse(MouseEvent { row: 7, .. }))
+        ));
+        assert_eq!(ordered[1], key());
+        assert_eq!(ordered[2], AppEvent::SnapshotReady);
+        assert!(input_before_snapshot([key()]).iter().all(|e| *e == key()));
     }
 
     fn test_identity() -> HostIdentity {
