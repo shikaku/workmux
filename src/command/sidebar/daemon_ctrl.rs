@@ -19,10 +19,12 @@ pub(super) fn ensure_daemon_running() -> Result<PathBuf> {
         return Ok(sock_path);
     }
 
-    // Stale socket from a crashed daemon
-    let _ = std::fs::remove_file(&sock_path);
+    // A stale socket is not removed here: a live daemon can refuse one
+    // connection, and removing its socket left it serving only the clients it
+    // had. The spawned daemon replaces the socket if it gets the daemon lock,
+    // and exits if a live daemon holds it.
     spawn_daemon()?;
-    if !wait_for_socket(&instance_id, Duration::from_secs(2)) {
+    if !wait_for_socket(&instance_id, Duration::from_secs(3)) {
         return Err(anyhow!("Sidebar daemon failed to start"));
     }
     Ok(sock_path)
@@ -40,12 +42,13 @@ fn spawn_daemon() -> Result<()> {
     Ok(())
 }
 
-/// Wait for the daemon's Unix socket to appear.
+/// Wait for the daemon's Unix socket to accept a connection. Not just to
+/// exist: a stale socket exists until the new daemon replaces it.
 fn wait_for_socket(instance_id: &str, timeout: Duration) -> bool {
     let path = daemon::socket_path(instance_id);
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {
-        if path.exists() {
+        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
             return true;
         }
         std::thread::sleep(Duration::from_millis(50));

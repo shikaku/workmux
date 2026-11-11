@@ -2,16 +2,19 @@
 
 #[cfg(target_os = "macos")]
 use super::fsevent::FsEventWatcher as SidebarWatcher;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ignore::gitignore::Gitignore;
+use nix::errno::Errno;
+use nix::fcntl::{Flock, FlockArg};
 #[cfg(not(target_os = "macos"))]
 use notify::RecommendedWatcher as SidebarWatcher;
 use notify::{EventKindMask, RecursiveMode, Watcher};
 use signal_hook::iterator::{Handle as SignalHandle, Signals};
 use std::collections::{HashMap, HashSet};
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -273,11 +276,93 @@ struct SocketServer {
     state: Arc<Mutex<SocketState>>,
 }
 
+/// What the accept loop does after `accept` fails.
+#[derive(Debug, PartialEq, Eq)]
+enum AcceptFailure {
+    /// One connection failed, such as a client that closed before it was
+    /// accepted (ECONNABORTED on macOS, which every liveness probe in
+    /// `ensure_daemon_running` can cause): take the next one.
+    Retry,
+    /// Out of descriptors or memory: wait, then take the next one.
+    Backoff,
+    /// The listener itself is broken: bind a new one.
+    Rebind,
+}
+
+fn accept_failure(error: &std::io::Error) -> AcceptFailure {
+    use std::io::ErrorKind;
+    if matches!(
+        error.kind(),
+        ErrorKind::Interrupted
+            | ErrorKind::WouldBlock
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::ConnectionReset
+    ) {
+        return AcceptFailure::Retry;
+    }
+    match error.raw_os_error() {
+        Some(libc::EPROTO) => AcceptFailure::Retry,
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM) => AcceptFailure::Backoff,
+        _ => AcceptFailure::Rebind,
+    }
+}
+
+fn listen(path: &Path) -> std::io::Result<UnixListener> {
+    let listener = UnixListener::bind(path)?;
+    // Restrict socket to owner only (prevent other local users from reading snapshots)
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
+}
+
+/// Bind `path` again, retrying every second until it works.
+fn rebind(path: &Path) -> UnixListener {
+    loop {
+        let _ = std::fs::remove_file(path);
+        match listen(path) {
+            Ok(listener) => return listener,
+            Err(error) => {
+                tracing::error!(%error, "sidebar socket rebind failed");
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+    }
+}
+
+/// Take the lock that makes this process the only daemon of the instance
+/// whose socket is `sock_path`, waiting up to `wait` for a daemon that is
+/// exiting. `None` while another daemon holds it.
+fn try_lock_daemon(sock_path: &Path, wait: Duration) -> Result<Option<Flock<File>>> {
+    let lock_path = sock_path.with_extension("lock");
+    let deadline = Instant::now() + wait;
+    loop {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open lock file: {}", lock_path.display()))?;
+        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+            Ok(lock) => return Ok(Some(lock)),
+            Err((_, Errno::EWOULDBLOCK)) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err((_, Errno::EWOULDBLOCK)) => return Ok(None),
+            Err((_, errno)) => {
+                return Err(errno)
+                    .with_context(|| format!("Failed to lock: {}", lock_path.display()));
+            }
+        }
+    }
+}
+
 impl SocketServer {
+    /// Only the daemon holding the lock from `try_lock_daemon` calls this:
+    /// a broken listener is replaced by unlinking and binding the path again.
     fn bind(path: &Path) -> std::io::Result<Self> {
-        let listener = UnixListener::bind(path)?;
-        // Restrict socket to owner only (prevent other local users from reading snapshots)
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        let mut listener = listen(path)?;
+        let path = path.to_path_buf();
         let state = Arc::new(Mutex::new(SocketState {
             clients: Vec::new(),
             cached: BroadcastCache {
@@ -290,12 +375,26 @@ impl SocketServer {
 
         thread::spawn(move || {
             loop {
+                // The thread never ends: a daemon whose accept loop had
+                // stopped kept serving its clients but took no new ones, so
+                // each new sidebar started a duplicate daemon.
                 let mut stream = match listener.accept() {
                     Ok((stream, _)) => stream,
-                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(error) => {
-                        tracing::error!(%error, "sidebar socket accept failed");
-                        break;
+                        match accept_failure(&error) {
+                            AcceptFailure::Retry => {
+                                tracing::debug!(%error, "sidebar socket accept failed");
+                            }
+                            AcceptFailure::Backoff => {
+                                tracing::warn!(%error, "sidebar socket accept failed");
+                                thread::sleep(Duration::from_millis(100));
+                            }
+                            AcceptFailure::Rebind => {
+                                tracing::error!(%error, "sidebar socket accept failed, rebinding");
+                                listener = rebind(&path);
+                            }
+                        }
+                        continue;
                     }
                 };
                 let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
@@ -2331,6 +2430,18 @@ pub fn run() -> Result<()> {
 
     tracing::info!(instance_id = %instance_id, "sidebar daemon starting");
 
+    // One daemon per instance, holding the lock for its lifetime; only the
+    // holder binds or removes the socket. A second daemon used to unlink the
+    // live one's socket on start and, exiting, remove whichever socket was
+    // there, so sidebars ended up split between daemons, and the daemon
+    // signalled through @workmux_sidebar_daemon_pid refreshed only its own.
+    // The wait covers a daemon that is still exiting after SIGTERM.
+    let sock_path = socket_path(&instance_id);
+    let Some(_daemon_lock) = try_lock_daemon(&sock_path, Duration::from_millis(1500))? else {
+        tracing::info!("sidebar daemon exiting: another daemon is running");
+        return Ok(());
+    };
+
     let term = Arc::new(AtomicBool::new(false));
     let observation_dirty = Arc::new(AtomicBool::new(false));
     let publication_dirty = Arc::new(AtomicBool::new(false));
@@ -2339,7 +2450,6 @@ pub fn run() -> Result<()> {
         spawn_signal_listener(term.clone(), observation_dirty.clone(), wake_tx.clone())?;
     let _wake_tx_keepalive = wake_tx.clone();
 
-    let sock_path = socket_path(&instance_id);
     let _ = std::fs::remove_file(&sock_path);
     let server = SocketServer::bind(&sock_path)?;
 
@@ -3387,6 +3497,49 @@ mod tests {
         let listener = UnixListener::bind(&path).unwrap();
         drop(listener);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn accept_failure_retries_one_connection_and_rebinds_a_broken_listener() {
+        use std::io::{Error, ErrorKind};
+
+        for kind in [
+            ErrorKind::Interrupted,
+            ErrorKind::WouldBlock,
+            ErrorKind::ConnectionAborted,
+            ErrorKind::ConnectionReset,
+        ] {
+            assert_eq!(accept_failure(&Error::from(kind)), AcceptFailure::Retry);
+        }
+        assert_eq!(
+            accept_failure(&Error::from_raw_os_error(libc::ECONNABORTED)),
+            AcceptFailure::Retry
+        );
+        assert_eq!(
+            accept_failure(&Error::from_raw_os_error(libc::EMFILE)),
+            AcceptFailure::Backoff
+        );
+        assert_eq!(
+            accept_failure(&Error::from_raw_os_error(libc::EBADF)),
+            AcceptFailure::Rebind
+        );
+    }
+
+    #[test]
+    fn daemon_lock_admits_one_daemon() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("sidebar.sock");
+
+        let first = try_lock_daemon(&socket, Duration::ZERO).unwrap();
+        assert!(first.is_some());
+        assert!(
+            try_lock_daemon(&socket, Duration::from_millis(100))
+                .unwrap()
+                .is_none()
+        );
+
+        drop(first);
+        assert!(try_lock_daemon(&socket, Duration::ZERO).unwrap().is_some());
     }
 
     fn working_agent(pane_id: &str, updated_ts: u64) -> AgentPane {
