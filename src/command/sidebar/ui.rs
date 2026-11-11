@@ -454,6 +454,8 @@ pub(crate) fn format_rebase_spans(
 /// Render the sidebar UI.
 pub fn render_sidebar(f: &mut Frame, app: &mut SidebarApp) {
     let mut area = f.area();
+    // Set again by the list renderers when they pin a header this frame.
+    app.pinned_header_area = Rect::default();
     if let Some(name) = &app.view_name {
         let scope = if app.filter_mode == SidebarFilterMode::Session {
             format!(
@@ -1269,13 +1271,14 @@ fn render_compact_list(f: &mut Frame, app: &mut SidebarApp, area: Rect) {
                 _ => None,
             };
             if let Some(line) = pinned {
-                f.render_widget(line, Rect::new(area.x, area.y, area.width, 1));
+                app.pinned_header_area = Rect::new(area.x, area.y, area.width, 1);
+                f.render_widget(line, app.pinned_header_area);
             }
             Rect::new(area.x, area.y + 1, area.width, area.height - 1)
         }
         None => area,
     };
-    // The pinned band is not a row, so it must not resolve to an agent.
+    // The pinned band is not a row: hit_test sends it to the first row below.
     app.list_area = list_area;
 
     let list = List::new(items)
@@ -1652,10 +1655,8 @@ fn render_tile_list(f: &mut Frame, app: &mut SidebarApp, area: Rect) {
             _ => None,
         }
     {
-        f.render_widget(
-            ratatui::text::Text::from(lines),
-            Rect::new(area.x, area.y, area.width, PIN_ROWS as u16),
-        );
+        app.pinned_header_area = Rect::new(area.x, area.y, area.width, PIN_ROWS as u16);
+        f.render_widget(ratatui::text::Text::from(lines), app.pinned_header_area);
     }
     let list_area = Rect::new(
         area.x,
@@ -1666,7 +1667,7 @@ fn render_tile_list(f: &mut Frame, app: &mut SidebarApp, area: Rect) {
     if let Some(view) = &viewport {
         *app.list_state.offset_mut() = view.start;
         let visible_height: usize = heights[view.start..view.end].iter().sum();
-        // The pinned band is not a row, so it must not resolve to an agent.
+        // The pinned band is not a row: hit_test sends it to the first row below.
         app.list_area = Rect::new(area.x, list_area.y, area.width, visible_height as u16);
     } else {
         app.list_area = Rect::new(area.x, list_area.y, area.width, 0);
@@ -1957,7 +1958,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_headers_label_each_group_and_are_not_selectable() {
+    fn compact_headers_label_each_group_and_click_through_to_its_first_agent() {
         let mut app = grouped_compact_app();
         let lines = rendered(&mut app, 30, 9);
 
@@ -1966,10 +1967,10 @@ mod tests {
         assert_eq!(lines[4].trim(), "mobile                   2");
         assert_eq!(lines[7].trim(), "workmux                  1");
 
-        // Headers hold no agent; the agents around them still resolve.
-        assert_eq!(app.hit_test(1, 0), None);
+        // A header holds no agent; a click on it lands on the one below.
+        assert_eq!(app.hit_test(1, 0), Some(0));
         assert_eq!(app.hit_test(1, 1), Some(0));
-        assert_eq!(app.hit_test(1, 4), None);
+        assert_eq!(app.hit_test(1, 4), Some(3));
         assert_eq!(app.hit_test(1, 5), Some(3));
     }
 
@@ -2125,7 +2126,8 @@ mod tests {
         // The label sits directly above its first agent, with no rule between.
         assert_eq!(lines[0].trim(), "api                 3");
         assert!(lines[1].contains("auth-refresh"));
-        assert_eq!(app.hit_test(1, 0), None);
+        // A click on the header lands on that first agent.
+        assert_eq!(app.hit_test(1, 0), Some(0));
         assert_eq!(app.hit_test(1, 1), Some(0));
 
         // A later group is opened by the divider that closes the previous one.
@@ -2135,7 +2137,9 @@ mod tests {
             .unwrap();
         assert_eq!(lines[header - 1], "─".repeat(24));
         assert!(lines[header + 1].contains("ios-refactor"));
-        assert_eq!(app.hit_test(1, header as u16), None);
+        let ios = app.hit_test(1, header as u16 + 1);
+        assert!(ios.is_some());
+        assert_eq!(app.hit_test(1, header as u16), ios);
     }
 
     #[test]
@@ -2174,8 +2178,9 @@ mod tests {
         // Viewport starts inside the api group, so its header is pinned.
         assert_eq!(lines[0].trim(), "api                3");
         assert!(lines[2].contains("rate-limit"));
-        // The pinned band is not a row and resolves to no agent.
-        assert_eq!(app.hit_test(1, 0), None);
+        // The pinned band is not a row; a click on it lands on the first
+        // agent below it.
+        assert_eq!(app.hit_test(1, 0), Some(1));
         assert_eq!(app.hit_test(1, 1), Some(1));
     }
 
@@ -2204,7 +2209,11 @@ mod tests {
         assert_eq!(lines[0].trim(), "api                 3");
         // One pinned line, then list content, never a second header line.
         assert!(lines[1] == "─".repeat(24) || lines[1].starts_with('▌'));
-        assert_eq!(app.hit_test(1, 0), None);
+        // A click on the pin lands on the first tile below it.
+        let first = app.agent_of_row(app.list_state.offset());
+        assert!(first.is_some());
+        assert_eq!(app.hit_test(1, 0), first);
+        assert_eq!(app.hit_test(1, 1), first);
 
         // Too short to hold the pin and the selected tile: the selection wins.
         let lines = rendered(&mut app, 24, 4);

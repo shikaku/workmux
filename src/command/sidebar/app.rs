@@ -316,6 +316,9 @@ pub struct SidebarApp {
     pub enter_action: SidebarEnterAction,
     /// Area where the list was last rendered (for mouse hit testing)
     pub list_area: Rect,
+    /// Band of the group header pinned above the list in the last frame;
+    /// empty when none is pinned.
+    pub pinned_header_area: Rect,
     /// Window prefix from config
     window_prefix: String,
     /// Stable identity of the sidebar's host pane, detected once at startup.
@@ -417,6 +420,7 @@ impl SidebarApp {
             layout_mode: SidebarLayoutMode::Compact,
             enter_action: SidebarEnterAction::Focus,
             list_area: Rect::default(),
+            pinned_header_area: Rect::default(),
             window_prefix: "wm-".to_string(),
             host_identity: None,
             host_agent_idx: None,
@@ -519,6 +523,7 @@ impl SidebarApp {
             layout_mode: SidebarLayoutMode::default(),
             enter_action: config.sidebar.enter_action(),
             list_area: Rect::default(),
+            pinned_header_area: Rect::default(),
             window_prefix,
             host_identity,
             host_agent_idx: None,
@@ -1278,9 +1283,20 @@ impl SidebarApp {
         self.step_selection(1, false);
     }
 
+    /// Agent under the cursor. A group header, in the list or pinned above
+    /// it, stands for the tile right below it: a click aimed at the top edge
+    /// of a worktree's tile often lands on its session's header.
     pub fn hit_test(&self, column: u16, row: u16) -> Option<usize> {
-        self.hit_test_row(column, row)
-            .and_then(|row| self.agent_of_row(row))
+        let pinned = self.pinned_header_area;
+        let row = if row >= pinned.y && row < pinned.y + pinned.height {
+            self.list_state.offset()
+        } else {
+            self.hit_test_row(column, row)?
+        };
+        match self.rows.get(row) {
+            Some(SidebarRow::Header { .. }) => self.agent_of_row(row + 1),
+            _ => self.agent_of_row(row),
+        }
     }
 
     /// Group whose toggle sits under the cursor, if any.
