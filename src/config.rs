@@ -641,7 +641,8 @@ pub struct SidebarConfig {
 
     /// Fork: while folding, sink groups whose agents are all stale below the
     /// rest, under a STALE rule. Off keeps every group in its place, so the
-    /// group order does not change as agents fall asleep. Default: true.
+    /// group order does not change as agents fall asleep. The daemon orders
+    /// for every client, so global configuration only. Default: true.
     pub sink_stale_groups: Option<bool>,
 
     /// Fork: file of pinned sessions, one `top<TAB>name` or `bottom<TAB>name`
@@ -3399,10 +3400,7 @@ impl Config {
                 .sidebar
                 .collapse_stale
                 .or(self.sidebar.collapse_stale),
-            sink_stale_groups: project
-                .sidebar
-                .sink_stale_groups
-                .or(self.sidebar.sink_stale_groups),
+            sink_stale_groups: self.sidebar.sink_stale_groups,
             session_order_file: self.sidebar.session_order_file.clone(),
         };
 
@@ -5337,15 +5335,13 @@ sidebar:
     }
 
     #[test]
-    fn sidebar_sink_stale_groups_defaults_true_and_merges_per_field() {
+    fn sidebar_sink_stale_groups_defaults_true_and_is_global_only() {
         assert!(Config::default().sidebar.sink_stale_groups());
         let global: Config =
             serde_yaml::from_str("sidebar:\n  sink_stale_groups: false\n").unwrap();
-        let project: Config = serde_yaml::from_str("{}\n").unwrap();
-        assert!(!global.clone().merge(project).sidebar.sink_stale_groups());
         let project: Config =
             serde_yaml::from_str("sidebar:\n  sink_stale_groups: true\n").unwrap();
-        assert!(global.merge(project).sidebar.sink_stale_groups());
+        assert!(!global.merge(project).sidebar.sink_stale_groups());
     }
 
     #[test]

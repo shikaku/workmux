@@ -2662,9 +2662,9 @@ pub fn run() -> Result<()> {
             // (the tool that writes the file signals the daemon).
             let session_order = match (group_by, session_order_file) {
                 (Some(crate::config::SidebarGroupBy::Session), Some(path)) => {
-                    super::session_order::SessionOrder::load(&path)
+                    Some(super::session_order::SessionOrder::load(&path))
                 }
-                _ => Default::default(),
+                _ => None,
             };
             // Folding is part of the grouped presentation: a flat list shows
             // every agent it carries.
@@ -2909,7 +2909,7 @@ struct TickInput {
     pr_statuses: HashMap<PathBuf, PrPathEntry>,
     check_statuses: HashMap<PathBuf, CheckPathEntry>,
     sleeping_pane_ids: HashSet<String>,
-    session_order: super::session_order::SessionOrder,
+    session_order: Option<super::session_order::SessionOrder>,
 }
 
 /// A state-file write to apply after computing the tick.
@@ -5263,7 +5263,7 @@ mod tests {
                     pr_statuses: HashMap::new(),
                     check_statuses: HashMap::new(),
                     sleeping_pane_ids: HashSet::new(),
-                    session_order: Default::default(),
+                    session_order: None,
                 },
                 tracker,
                 last,
