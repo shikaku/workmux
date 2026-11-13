@@ -12,6 +12,7 @@ use crate::github::{CheckSummary, PrSummary};
 use crate::multiplexer::{AgentPane, AgentStatus};
 
 use super::app::{SidebarFilterMode, SidebarLayoutMode};
+use super::session_order::{SessionOrder, Zone};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PrPathEntry {
@@ -215,7 +216,9 @@ fn dormant_groups(
 }
 
 /// Order agents for publication: groups alphabetically, then the configured
-/// ordering within each group. Grouping only prefixes the key, so an agent can
+/// ordering within each group. Fork: grouped by session, `session_order`
+/// puts pinned sessions above and below the alphabetical ones; a dormant
+/// group still sinks under the STALE rule first, pinned or not. Grouping only prefixes the key, so an agent can
 /// never leave its group. Ordering stays with the daemon so the published pane
 /// list, `{idx}` and `workmux sidebar jump` agree with what clients draw.
 fn order_agents(
@@ -225,6 +228,7 @@ fn order_agents(
     now: u64,
     staleness: &StalenessContext<'_>,
     sink_dormant_groups: bool,
+    session_order: &SessionOrder,
 ) {
     let dormant = if sink_dormant_groups {
         dormant_groups(agents, group_by, now, staleness)
@@ -237,7 +241,11 @@ fn order_agents(
     let group_sort_key = |agent: &AgentPane| {
         let (lower, label) = group_sort_key(agent, group_by);
         let stale = sink_dormant_groups && staleness.is_stale(agent, now);
-        (dormant.contains(&label), lower, label, stale)
+        let pin = match group_by {
+            Some(SidebarGroupBy::Session) => session_order.rank(&label),
+            _ => (Zone::Mid, 0),
+        };
+        (dormant.contains(&label), pin, lower, label, stale)
     };
     match sort {
         SidebarSort::Recency => agents.sort_by_cached_key(|a| {
@@ -311,6 +319,8 @@ pub(crate) struct SnapshotInputs {
     pub check_statuses: HashMap<PathBuf, CheckPathEntry>,
     pub sleeping_pane_ids: HashSet<String>,
     pub interrupted_pane_ids: HashSet<String>,
+    /// Fork: pinned sessions, applied while grouping by session.
+    pub session_order: SessionOrder,
 }
 
 /// Build a snapshot from reconciled agents and tmux state.
@@ -337,6 +347,7 @@ pub(crate) fn build_snapshot(input: SnapshotInputs) -> SidebarSnapshot {
         check_statuses,
         sleeping_pane_ids,
         interrupted_pane_ids,
+        session_order,
     } = input;
 
     let done_icon = status_icons.done();
@@ -392,7 +403,15 @@ pub(crate) fn build_snapshot(input: SnapshotInputs) -> SidebarSnapshot {
         interrupted: &interrupted_pane_ids,
         stale_threshold_secs,
     };
-    order_agents(&mut agents, group_by, sort, now, &staleness, collapse_stale);
+    order_agents(
+        &mut agents,
+        group_by,
+        sort,
+        now,
+        &staleness,
+        collapse_stale,
+        &session_order,
+    );
 
     // Prune sleeping set to only include live agents
     let live_sleeping: HashSet<String> = sleeping_pane_ids
@@ -652,7 +671,15 @@ mod tests {
             interrupted: &interrupted,
             stale_threshold_secs: STALE_THRESHOLD_SECS,
         };
-        order_agents(&mut agents, group_by, sort, now, &staleness, false);
+        order_agents(
+            &mut agents,
+            group_by,
+            sort,
+            now,
+            &staleness,
+            false,
+            &SessionOrder::default(),
+        );
         order(&agents)
     }
 
@@ -770,6 +797,7 @@ mod tests {
             NOW + 30,
             &staleness,
             false,
+            &SessionOrder::default(),
         );
         assert_eq!(order(&agents), first);
     }
@@ -796,6 +824,7 @@ mod tests {
             NOW,
             &staleness,
             true,
+            &SessionOrder::default(),
         );
         assert_eq!(order(&agents), ["%2", "%1"]);
 
@@ -808,6 +837,7 @@ mod tests {
             NOW,
             &staleness,
             false,
+            &SessionOrder::default(),
         );
         assert_eq!(order(&agents), ["%1", "%2"]);
     }
@@ -845,8 +875,56 @@ mod tests {
             NOW,
             &staleness,
             false,
+            &SessionOrder::default(),
         );
         assert_eq!(order(&agents), ["%1", "%2", "%3"]);
+    }
+
+    #[test]
+    fn pinned_sessions_order_each_side_of_the_stale_rule() {
+        let sessions = [
+            ("alpha", 30),
+            ("beta", 30),
+            ("gamma", 30),
+            ("delta", 6 * 60 * 60),
+            ("epsilon", 6 * 60 * 60),
+            ("zeta", 6 * 60 * 60),
+        ];
+        let agents: Vec<AgentPane> = sessions
+            .iter()
+            .zip(1..)
+            .map(|((name, age), pane)| grouped_agent(name, name, pane, *age, NOW))
+            .collect();
+        let pins = SessionOrder::parse("top\tgamma\ntop\tepsilon\nbottom\talpha\nbottom\tzeta\n");
+        let empty = HashSet::new();
+        let staleness = StalenessContext {
+            sleeping: &empty,
+            interrupted: &empty,
+            stale_threshold_secs: STALE_THRESHOLD_SECS,
+        };
+        let sorted = |group_by| {
+            let mut agents = agents.clone();
+            order_agents(
+                &mut agents,
+                Some(group_by),
+                SidebarSort::Window,
+                NOW,
+                &staleness,
+                true,
+                &pins,
+            );
+            order(&agents)
+        };
+
+        assert_eq!(
+            sorted(SidebarGroupBy::Session),
+            ["%3", "%2", "%1", "%5", "%4", "%6"]
+        );
+        // Pins name sessions: grouped by project they do not apply.
+        assert_eq!(
+            sorted(SidebarGroupBy::Project),
+            ["%1", "%2", "%3", "%4", "%5", "%6"]
+        );
     }
 
     #[test]

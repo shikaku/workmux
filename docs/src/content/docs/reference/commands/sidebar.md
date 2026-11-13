@@ -102,6 +102,7 @@ sidebar:
   dim_stale: true # dim stale agents using stale_after
   group_by: project # "project" or "session"; unset keeps one flat list
   collapse_stale: true # while grouped, fold stale agents behind a toggle
+  # session_order_file: ~/.local/state/tmux/session-order # fork: pinned sessions, grouped by session
 ```
 
 Set `enter_action: select` to show the selected agent's window while keeping

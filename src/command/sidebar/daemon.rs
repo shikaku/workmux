@@ -2639,6 +2639,7 @@ pub fn run() -> Result<()> {
                 collapse_stale,
                 stale_threshold_secs,
                 git_status_enabled,
+                session_order_file,
             ) = {
                 let cfg = config.lock().unwrap();
                 (
@@ -2650,7 +2651,16 @@ pub fn run() -> Result<()> {
                     cfg.sidebar.collapse_stale(),
                     cfg.stale_after_secs(),
                     cfg.sidebar.git_status(),
+                    cfg.sidebar.session_order_file(),
                 )
+            };
+            // Fork: read on every publish, so a pin shows on the next refresh
+            // (the tool that writes the file signals the daemon).
+            let session_order = match (group_by, session_order_file) {
+                (Some(crate::config::SidebarGroupBy::Session), Some(path)) => {
+                    super::session_order::SessionOrder::load(&path)
+                }
+                _ => Default::default(),
             };
             // Folding is part of the grouped presentation: a flat list shows
             // every agent it carries.
@@ -2679,6 +2689,7 @@ pub fn run() -> Result<()> {
                     pr_statuses: snapshot_status_cache(git_status_enabled, &pr_cache),
                     check_statuses: snapshot_status_cache(git_status_enabled, &check_cache),
                     sleeping_pane_ids: read_sleeping_panes(tmux_state.sleeping_panes.as_deref()),
+                    session_order,
                 },
                 &mut inactivity_tracker,
                 &last_interrupted,
@@ -2892,6 +2903,7 @@ struct TickInput {
     pr_statuses: HashMap<PathBuf, PrPathEntry>,
     check_statuses: HashMap<PathBuf, CheckPathEntry>,
     sleeping_pane_ids: HashSet<String>,
+    session_order: super::session_order::SessionOrder,
 }
 
 /// A state-file write to apply after computing the tick.
@@ -2941,6 +2953,7 @@ fn compute_tick(
         pr_statuses,
         check_statuses,
         sleeping_pane_ids,
+        session_order,
     } = input;
 
     // Phase 1: Inactivity detection
@@ -2992,6 +3005,7 @@ fn compute_tick(
         check_statuses,
         sleeping_pane_ids,
         interrupted_pane_ids: interrupted.clone(),
+        session_order,
     });
 
     // Phase 4: Determine runtime write side effect
@@ -5239,6 +5253,7 @@ mod tests {
                     pr_statuses: HashMap::new(),
                     check_statuses: HashMap::new(),
                     sleeping_pane_ids: HashSet::new(),
+                    session_order: Default::default(),
                 },
                 tracker,
                 last,

@@ -638,6 +638,13 @@ pub struct SidebarConfig {
     /// a single line instead of a full tile. Part of the grouped presentation,
     /// so it has no effect while grouping is off. Default: true.
     pub collapse_stale: Option<bool>,
+
+    /// Fork: file of pinned sessions, one `top<TAB>name` or `bottom<TAB>name`
+    /// per line, top to bottom. While grouped by session, pinned sessions open
+    /// and close the list (each side of the STALE rule) in file order. The
+    /// daemon rereads it on every refresh; `~` is expanded. Global
+    /// configuration only. Default: unset (alphabetical).
+    pub session_order_file: Option<String>,
 }
 
 impl SidebarConfig {
@@ -651,6 +658,12 @@ impl SidebarConfig {
 
     pub fn dim_stale(&self) -> bool {
         self.dim_stale.unwrap_or(true)
+    }
+
+    pub fn session_order_file(&self) -> Option<PathBuf> {
+        self.session_order_file
+            .as_deref()
+            .map(crate::util::expand_tilde)
     }
 
     /// Whether stale agents fold behind their group's toggle. Folding belongs
@@ -3377,6 +3390,7 @@ impl Config {
                 .sidebar
                 .collapse_stale
                 .or(self.sidebar.collapse_stale),
+            session_order_file: self.sidebar.session_order_file.clone(),
         };
 
         // Sandbox config: per-field override with nested struct merging
@@ -5307,6 +5321,31 @@ sidebar:
 
         assert_eq!(merged.sidebar.git_status, Some(false));
         assert!(!merged.sidebar.git_status());
+    }
+
+    #[test]
+    fn sidebar_session_order_file_is_global_only() {
+        let global: Config = serde_yaml::from_str(
+            r#"
+sidebar:
+  session_order_file: /tmp/global-order
+"#,
+        )
+        .unwrap();
+        let project: Config = serde_yaml::from_str(
+            r#"
+sidebar:
+  session_order_file: /tmp/project-order
+"#,
+        )
+        .unwrap();
+        let merged = global.merge(project);
+
+        assert_eq!(
+            merged.sidebar.session_order_file(),
+            Some(std::path::PathBuf::from("/tmp/global-order"))
+        );
+        assert_eq!(Config::default().sidebar.session_order_file(), None);
     }
 
     #[test]

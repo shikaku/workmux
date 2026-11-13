@@ -28,6 +28,7 @@ mod hooks;
 mod layout_tree;
 mod panes;
 mod runtime;
+mod session_order;
 mod session_state;
 mod snapshot;
 mod template;

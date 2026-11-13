@@ -108,6 +108,10 @@ sidebar:
   # While grouped, fold each group's stale agents behind a toggle
   # (default: true)
   collapse_stale: true
+
+  # Fork: sessions pinned to the top or bottom while grouped by session
+  # (global config only; unset by default)
+  # session_order_file: ~/.local/state/tmux/session-order
 ```
 
 For a horizontal top bar:
@@ -202,6 +206,27 @@ sidebar:
 Sections are alphabetical and keep their place while agents change status, so a
 row only ever moves within its own group. `sort` decides the order inside a
 section.
+
+### Pinned sessions (fork)
+
+While grouped by session, `session_order_file` (global config only) pins
+sessions to the top or the bottom of the list. The file holds one
+`top<TAB>name` or `bottom<TAB>name` per line, top to bottom; whatever keeps it
+(here, a tmux session picker) owns the format:
+
+```yaml
+sidebar:
+  group_by: session
+  session_order_file: ~/.local/state/tmux/session-order
+```
+
+Sessions pinned to the top open the list in file order, sessions pinned to the
+bottom close it in file order, and the rest stay alphabetical between. The
+`STALE` rule still comes first: a pinned session whose agents are all stale
+moves under it and takes the same place among the stale groups. A missing file
+means no pins. The daemon rereads the file on every refresh; a tool that changes
+it can send `SIGUSR1` to the daemon (pid in the tmux option
+`@workmux_sidebar_daemon_pid`) so the sidebar follows at once.
 
 Headers are labels, not agents: `j`/`k` and `g`/`G` skip them, they cannot be
 selected or clicked, and they are not counted by `{idx}`, `{jump_key}` or
