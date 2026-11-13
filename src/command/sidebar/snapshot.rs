@@ -73,6 +73,10 @@ pub struct SidebarSnapshot {
     /// that folded differently would number rows the list does not carry.
     #[serde(default)]
     pub collapse_stale: bool,
+    /// Fork: groups holding only stale agents keep their place instead of
+    /// sinking under the STALE rule (`sidebar.sink_stale_groups: false`).
+    #[serde(default)]
+    pub stale_groups_in_place: bool,
     /// Stale timeout selected by the daemon for this snapshot.
     #[serde(default = "default_stale_threshold_secs")]
     pub stale_threshold_secs: u64,
@@ -311,6 +315,8 @@ pub(crate) struct SnapshotInputs {
     /// Sink groups holding no live work below the rest, matching the client's
     /// collapsed rendering of stale agents.
     pub collapse_stale: bool,
+    /// Fork: keep all-stale groups in place while folding.
+    pub stale_groups_in_place: bool,
     pub stale_threshold_secs: Option<u64>,
     pub expanded_groups: Vec<String>,
     pub status_icons: StatusIcons,
@@ -339,6 +345,7 @@ pub(crate) fn build_snapshot(input: SnapshotInputs) -> SidebarSnapshot {
         sort,
         group_by,
         collapse_stale,
+        stale_groups_in_place,
         stale_threshold_secs,
         expanded_groups,
         status_icons,
@@ -409,7 +416,7 @@ pub(crate) fn build_snapshot(input: SnapshotInputs) -> SidebarSnapshot {
         sort,
         now,
         &staleness,
-        collapse_stale,
+        collapse_stale && !stale_groups_in_place,
         &session_order,
     );
 
@@ -466,6 +473,7 @@ pub(crate) fn build_snapshot(input: SnapshotInputs) -> SidebarSnapshot {
         expanded_groups,
         stale_pane_ids,
         collapse_stale,
+        stale_groups_in_place,
         stale_threshold_secs,
         agents,
         config_version: 0,
@@ -925,6 +933,33 @@ mod tests {
             sorted(SidebarGroupBy::Project),
             ["%1", "%2", "%3", "%4", "%5", "%6"]
         );
+    }
+
+    #[test]
+    fn stale_groups_in_place_keep_the_group_order() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let agents = vec![
+            grouped_agent("api", "alpha", 1, 6 * 60 * 60, now),
+            grouped_agent("api", "beta", 2, 30, now),
+        ];
+        let sorted = |stale_groups_in_place| {
+            let snapshot = build_snapshot(SnapshotInputs {
+                agents: agents.clone(),
+                group_by: Some(SidebarGroupBy::Session),
+                collapse_stale: true,
+                stale_groups_in_place,
+                session_order: SessionOrder::parse("top\talpha\n"),
+                ..Default::default()
+            });
+            assert_eq!(snapshot.stale_groups_in_place, stale_groups_in_place);
+            order(&snapshot.agents)
+        };
+
+        assert_eq!(sorted(false), ["%2", "%1"]);
+        assert_eq!(sorted(true), ["%1", "%2"]);
     }
 
     #[test]

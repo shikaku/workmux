@@ -109,6 +109,10 @@ sidebar:
   # (default: true)
   collapse_stale: true
 
+  # Fork: sink groups whose agents are all stale under a STALE rule
+  # (default: true); false keeps the group order fixed
+  sink_stale_groups: true
+
   # Fork: sessions pinned to the top or bottom while grouped by session
   # (global config only; unset by default)
   # session_order_file: ~/.local/state/tmux/session-order
@@ -223,7 +227,8 @@ sidebar:
 Sessions pinned to the top open the list in file order, sessions pinned to the
 bottom close it in file order, and the rest stay alphabetical between. The
 `STALE` rule still comes first: a pinned session whose agents are all stale
-moves under it and takes the same place among the stale groups. A missing file
+moves under it and takes the same place among the stale groups, unless
+`sink_stale_groups: false` keeps it in place. A missing file
 means no pins. The daemon rereads the file on every refresh; a tool that changes
 it can send `SIGUSR1` to the daemon (pid in the tmux option
 `@workmux_sidebar_daemon_pid`) so the sidebar follows at once.
@@ -298,6 +303,16 @@ rather than a full tile.
 A group whose agents are all stale has no live rows to head, so its header
 becomes its own toggle and the whole group costs one row. Those groups sort
 below every group still holding live work, under a `STALE` rule.
+
+Fork: set `sink_stale_groups: false` to keep such a group in its place instead,
+folded to its one row, with no `STALE` rule, so the group order stays the same
+as agents fall asleep and wake up:
+
+```yaml
+sidebar:
+  group_by: session
+  sink_stale_groups: false
+```
 
 Which groups are open is shared by every sidebar pane, for as long as the tmux
 server runs: closing and reopening the sidebar keeps your folds, restarting

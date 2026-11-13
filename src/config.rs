@@ -639,6 +639,11 @@ pub struct SidebarConfig {
     /// so it has no effect while grouping is off. Default: true.
     pub collapse_stale: Option<bool>,
 
+    /// Fork: while folding, sink groups whose agents are all stale below the
+    /// rest, under a STALE rule. Off keeps every group in its place, so the
+    /// group order does not change as agents fall asleep. Default: true.
+    pub sink_stale_groups: Option<bool>,
+
     /// Fork: file of pinned sessions, one `top<TAB>name` or `bottom<TAB>name`
     /// per line, top to bottom. While grouped by session, pinned sessions open
     /// and close the list (each side of the STALE rule) in file order. The
@@ -671,6 +676,10 @@ impl SidebarConfig {
     /// is on.
     pub fn collapse_stale(&self) -> bool {
         self.collapse_stale.unwrap_or(true)
+    }
+
+    pub fn sink_stale_groups(&self) -> bool {
+        self.sink_stale_groups.unwrap_or(true)
     }
 
     /// Grouping asked for by config, with `none` resolved. Grouping is opt in:
@@ -3390,6 +3399,10 @@ impl Config {
                 .sidebar
                 .collapse_stale
                 .or(self.sidebar.collapse_stale),
+            sink_stale_groups: project
+                .sidebar
+                .sink_stale_groups
+                .or(self.sidebar.sink_stale_groups),
             session_order_file: self.sidebar.session_order_file.clone(),
         };
 
@@ -5321,6 +5334,18 @@ sidebar:
 
         assert_eq!(merged.sidebar.git_status, Some(false));
         assert!(!merged.sidebar.git_status());
+    }
+
+    #[test]
+    fn sidebar_sink_stale_groups_defaults_true_and_merges_per_field() {
+        assert!(Config::default().sidebar.sink_stale_groups());
+        let global: Config =
+            serde_yaml::from_str("sidebar:\n  sink_stale_groups: false\n").unwrap();
+        let project: Config = serde_yaml::from_str("{}\n").unwrap();
+        assert!(!global.clone().merge(project).sidebar.sink_stale_groups());
+        let project: Config =
+            serde_yaml::from_str("sidebar:\n  sink_stale_groups: true\n").unwrap();
+        assert!(global.merge(project).sidebar.sink_stale_groups());
     }
 
     #[test]

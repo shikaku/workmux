@@ -311,6 +311,8 @@ pub struct SidebarApp {
     /// snapshot rather than this client's config so the rows drawn here and
     /// the pane list behind `jump` fold the same agents.
     pub collapse_stale: bool,
+    /// Fork: all-stale groups keep their place, so no STALE rule is drawn.
+    pub stale_groups_in_place: bool,
     pub position: SidebarPosition,
     pub layout_mode: SidebarLayoutMode,
     pub enter_action: SidebarEnterAction,
@@ -416,6 +418,7 @@ impl SidebarApp {
             stale_threshold_secs: super::snapshot::STALE_THRESHOLD_SECS,
             dim_stale: true,
             collapse_stale: false,
+            stale_groups_in_place: false,
             position: SidebarPosition::Left,
             layout_mode: SidebarLayoutMode::Compact,
             enter_action: SidebarEnterAction::Focus,
@@ -519,6 +522,7 @@ impl SidebarApp {
             dim_stale: config.sidebar.dim_stale(),
             // Folding arrives with the first snapshot, from the daemon.
             collapse_stale: false,
+            stale_groups_in_place: false,
             position,
             layout_mode: SidebarLayoutMode::default(),
             enter_action: config.sidebar.enter_action(),
@@ -627,6 +631,7 @@ impl SidebarApp {
         self.stale_threshold_secs = snapshot.stale_threshold_secs;
         self.refresh_templates();
         self.collapse_stale = snapshot.collapse_stale;
+        self.stale_groups_in_place = snapshot.stale_groups_in_place;
         self.expanded_groups = snapshot.expanded_groups.into_iter().collect();
         self.stale_pane_ids = snapshot.stale_pane_ids;
         self.agents = snapshot.agents;
@@ -953,6 +958,7 @@ impl SidebarApp {
         // so a session filter that strips a group's live agents cannot
         // strand the rule in the middle of the list.
         if self.collapse_stale
+            && !self.stale_groups_in_place
             && let Some((row, _)) = groups
                 .iter()
                 .rev()
@@ -2457,6 +2463,7 @@ mod tests {
             expanded_groups: Vec::new(),
             stale_pane_ids: std::collections::HashSet::new(),
             collapse_stale: false,
+            stale_groups_in_place: false,
             stale_threshold_secs: crate::command::sidebar::snapshot::STALE_THRESHOLD_SECS,
             active_windows: std::collections::HashSet::from([(
                 "s".to_string(),
@@ -2705,6 +2712,7 @@ mod grouping_tests {
         SidebarSnapshot {
             stale_pane_ids,
             collapse_stale: false,
+            stale_groups_in_place: false,
             stale_threshold_secs: super::super::snapshot::STALE_THRESHOLD_SECS,
             position: SidebarPosition::Left,
             layout_mode: SidebarLayoutMode::Tiles,
@@ -3098,6 +3106,39 @@ mod grouping_tests {
                     count: 1,
                     expanded: false
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn groups_kept_in_place_fold_without_a_stale_rule() {
+        let mut app = app();
+        // sink_stale_groups: false. The daemon leaves the all-stale group
+        // where it was; it still folds into one row, under no rule.
+        app.apply_snapshot(SidebarSnapshot {
+            stale_groups_in_place: true,
+            ..folding_snapshot(
+                Some(SidebarGroupBy::Project),
+                vec![
+                    agent("%1", "api", "alpha"),
+                    active(agent("%2", "mobile", "alpha")),
+                ],
+            )
+        });
+
+        assert_eq!(
+            app.rows,
+            vec![
+                SidebarRow::StaleGroup {
+                    label: "api".to_string(),
+                    count: 1,
+                    expanded: false
+                },
+                SidebarRow::Header {
+                    label: "mobile".to_string(),
+                    count: 1
+                },
+                SidebarRow::Agent(1),
             ]
         );
     }

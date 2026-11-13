@@ -221,6 +221,7 @@ fn snapshots_equal(
         expanded_groups: _,
         stale_pane_ids: _,
         collapse_stale: _,
+        stale_groups_in_place: _,
         stale_threshold_secs: _,
         agents: _,
         config_version: _,
@@ -242,6 +243,7 @@ fn snapshots_equal(
         && left.expanded_groups == right.expanded_groups
         && left.stale_pane_ids == right.stale_pane_ids
         && left.collapse_stale == right.collapse_stale
+        && left.stale_groups_in_place == right.stale_groups_in_place
         && left.stale_threshold_secs == right.stale_threshold_secs
         && left.agents == right.agents
         && left.config_version == right.config_version
@@ -2637,6 +2639,7 @@ pub fn run() -> Result<()> {
                 sort,
                 group_by,
                 collapse_stale,
+                stale_groups_in_place,
                 stale_threshold_secs,
                 git_status_enabled,
                 session_order_file,
@@ -2649,6 +2652,7 @@ pub fn run() -> Result<()> {
                     cfg.sidebar.sort.unwrap_or_default(),
                     read_sidebar_group_by(&cfg, tmux_state.group_by.as_deref()),
                     cfg.sidebar.collapse_stale(),
+                    !cfg.sidebar.sink_stale_groups(),
                     cfg.stale_after_secs(),
                     cfg.sidebar.git_status(),
                     cfg.sidebar.session_order_file(),
@@ -2683,6 +2687,7 @@ pub fn run() -> Result<()> {
                     sort,
                     group_by,
                     collapse_stale,
+                    stale_groups_in_place,
                     stale_threshold_secs,
                     expanded_groups: read_expanded_groups(tmux_state.expanded_groups.as_deref()),
                     git_statuses: snapshot_status_cache(git_status_enabled, &git_cache),
@@ -2897,6 +2902,7 @@ struct TickInput {
     sort: crate::config::SidebarSort,
     group_by: Option<crate::config::SidebarGroupBy>,
     collapse_stale: bool,
+    stale_groups_in_place: bool,
     stale_threshold_secs: u64,
     expanded_groups: Vec<String>,
     git_statuses: HashMap<PathBuf, GitStatus>,
@@ -2947,6 +2953,7 @@ fn compute_tick(
         sort,
         group_by,
         collapse_stale,
+        stale_groups_in_place,
         stale_threshold_secs,
         expanded_groups,
         git_statuses,
@@ -2997,6 +3004,7 @@ fn compute_tick(
         sort,
         group_by,
         collapse_stale,
+        stale_groups_in_place,
         stale_threshold_secs: Some(stale_threshold_secs),
         expanded_groups,
         status_icons: status_icons.clone(),
@@ -3784,6 +3792,7 @@ mod tests {
             expanded_groups: Vec::new(),
             stale_pane_ids: std::collections::HashSet::new(),
             collapse_stale: false,
+            stale_groups_in_place: false,
             stale_threshold_secs: super::super::snapshot::STALE_THRESHOLD_SECS,
             active_windows: HashSet::new(),
             active_pane_ids: HashSet::new(),
@@ -5242,6 +5251,7 @@ mod tests {
                     sort: crate::config::SidebarSort::default(),
                     group_by: None,
                     collapse_stale: false,
+                    stale_groups_in_place: false,
                     stale_threshold_secs: crate::command::sidebar::snapshot::STALE_THRESHOLD_SECS,
                     expanded_groups: Vec::new(),
                     now,
